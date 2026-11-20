@@ -78,7 +78,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2660;
-				LastUpgradeCheck = 2700;
+				LastUpgradeCheck = 2720;
 				TargetAttributes = {
 					AE614D8A302245D400C1C2E9 = {
 						CreatedOnToolsVersion = 26.6;
@@ -257,7 +257,6 @@
 		AE614D97302245D700C1C2E9 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
@@ -282,7 +281,6 @@
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"/opt/homebrew/lib/**",
-					"$(PROJECT_DIR)/OAPW_Mac_V1",
 					"$(PROJECT_DIR)/OAPW_Mac_V2",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.6;
@@ -312,7 +310,6 @@
 		AE614D98302245D700C1C2E9 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
@@ -338,7 +335,6 @@
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"/opt/homebrew/lib/**",
-					"$(PROJECT_DIR)/OAPW_Mac_V1",
 					"$(PROJECT_DIR)/OAPW_Mac_V2",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.6;
