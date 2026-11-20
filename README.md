@@ -57,6 +57,27 @@ No Aggregate Device is needed. BlackHole and the output device run on independen
 
 **Known limitation:** Switching the output device while OAPW is running (e.g. from speakers to headphones) restarts the audio engine, and plug & play device switching is not yet fully supported. A dedicated edition is planned.
 
+## 🔀 Signal Flow
+
+```mermaid
+flowchart TD
+    A["Music player<br/>(e.g. VLC)"] -->|"Stereo L/R"| B["BlackHole 2ch<br/>virtual audio device"]
+    B -->|"CoreAudio input<br/>(input clock)"| C["Clock drift compensation<br/>(adaptive resampling, max. ±200 ppm)"]
+    C --> D["Asymmetric pre-alignment<br/>(optional, beta)"]
+    D --> E["Linear-phase FIR EQ + 3-band FIR crossover<br/>(FFT overlap-save, 64-bit)"]
+    E -->|"Low (bypass)"| G["Sum + make-up gain"]
+    E -->|"Mid"| F["Recursive RACE<br/>(L ↔ R crosstalk cancellation)"]
+    F -->|"delayed, attenuated output<br/>fed back to opposite channel"| F
+    F --> G
+    E -->|"High (bypass)"| G
+    G --> H["Volume ramp<br/>hard clip at ±1.0"]
+    H -->|"Output clock"| I["Output device<br/>(DAC / Mac speakers)"]
+    I --> J(("Loudspeakers"))
+    I -.->|"playback progress<br/>(buffer fill level)"| C
+```
+
+By default, RACE is applied to the mid band only. With the frequency limit switched off, the full band is processed.
+
 ## 🧠 Architecture Overview
 
 * **AudioEngineManager (Swift):** Manages `AVAudioEngine`, the input tap and the player node, and restarts the engine after hardware configuration changes. Input blocks are handed to the engine on the input clock; processed blocks are fetched on the output side, and playback progress is reported back for drift control.
