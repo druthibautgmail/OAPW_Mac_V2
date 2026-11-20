@@ -8,13 +8,18 @@ struct AmbiophonicsDashboard: View {
     @State private var isRunning = true
     @State private var isAmbiophonicsActive = true
     @State private var processingMode = 0 // 0 = Music, 1 = Movie
-    @State private var isRecording = false // NEU: Status für die RAW-Aufnahme
+    @State private var isRecording = false
     
-    // RACE Parameter
+    // Status für den 3-Wege Export-Modus (0 = RAW, 1 = Normal, 2 = GLC)
+    @State private var recordMode = 0
+    
+    // RACE Parameters
     @State private var attenuation: Float = -2.3
     @State private var speakerDelay: Float = 68.0
     @State private var centerLevel: Float = 0.0
     @State private var volumePercent: Float = 100.0
+    @State private var crossoverLow: Float = 250.0
+    @State private var crossoverHigh: Float = 6000.0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -52,20 +57,55 @@ struct AmbiophonicsDashboard: View {
                 )
                 {
                     VStack(spacing: 20) {
-                        parameterRow(name: "Attenuation", value: $attenuation, range: -10...0, unit: "dB")
-                        parameterRow(name: "Speaker Delay", value: $speakerDelay, range: 0...100, unit: "µs")
-                        parameterRow(name: "Center Level", value: $centerLevel, range: 0...1, unit: "")
-                        parameterRow(name: "Volume", value: $volumePercent, range: 0...200, unit: "%")
+                        parameterRow(name: "Attenuation", value: $attenuation, range: -10...0, unit: "dB", fractionDigits: 1)
+                        parameterRow(name: "Speaker Delay", value: $speakerDelay, range: 0...100, unit: "µs", fractionDigits: 0)
+                        parameterRow(name: "Center Level", value: $centerLevel, range: 0...1, unit: "", fractionDigits: 2)
+                        parameterRow(name: "Volume", value: $volumePercent, range: 0...200, unit: "%", fractionDigits: 0)
+                        
+                        Divider()
+                        
+                        // --- Trennfrequenz Unten (Highpass) ---
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("RACE Highpass (Bässe) [Hz]").font(.subheadline)
+                            HStack {
+                                Slider(value: $crossoverLow, in: 20...1500)
+                                TextField("", value: $crossoverLow, format: .number.precision(.fractionLength(0)))
+                                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                                    .frame(width: 55)
+                                    .multilineTextAlignment(.trailing)
+                                    .font(.caption)
+                            }
+                        }
+                        .onChange(of: crossoverLow) { oldValue, newValue in
+                            if newValue >= crossoverHigh { crossoverHigh = newValue + 100 }
+                            updateCrossover()
+                        }
+                        
+                        // --- Trennfrequenz Oben (Lowpass) ---
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("RACE Lowpass (Höhen) [Hz]").font(.subheadline)
+                            HStack {
+                                Slider(value: $crossoverHigh, in: 1000...20000)
+                                TextField("", value: $crossoverHigh, format: .number.precision(.fractionLength(0)))
+                                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                                    .frame(width: 55)
+                                    .multilineTextAlignment(.trailing)
+                                    .font(.caption)
+                            }
+                        }
+                        .onChange(of: crossoverHigh) { oldValue, newValue in
+                            if newValue <= crossoverLow { crossoverLow = newValue - 100 }
+                            updateCrossover()
+                        }
                     }
                     .padding(.top, 15)
                 }
-                
                 
                 // Rechte Spalte: Routing und Geometrie untereinander
                 VStack(spacing: 20) {
                     
                     // 2. Audio Routing Panel (Oben Rechts)
-                    GroupBox(label: Label("Audio Routing", systemImage: "arrow.left.and.right.square")) {
+                    GroupBox(label: Label("Audio Routing & Export", systemImage: "arrow.left.and.right.square")) {
                         VStack(alignment: .leading, spacing: 15) {
                             HStack {
                                 Text("Input").foregroundColor(.secondary)
@@ -81,13 +121,26 @@ struct AmbiophonicsDashboard: View {
                             
                             Spacer().frame(height: 5)
                             
-                            // --- NEU: Aufnahme Button für unprozessierten Stream ---
+                            // --- 3-Wege Selektor für den WAV-Export ---
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text("WAV Export Mode").font(.caption).foregroundColor(.secondary)
+                                Picker("", selection: $recordMode) {
+                                    Text("1. RAW (Bypass)").tag(0)
+                                    Text("2. Std. RACE").tag(1)
+                                    Text("3. GLC Asym.").tag(2)
+                                }
+                                .pickerStyle(SegmentedPickerStyle())
+                                .labelsHidden()
+                                .disabled(isRecording)
+                            }
+                            
+                            // --- Dynamischer Aufnahme Button ---
                             Button(action: toggleRecording) {
                                 HStack {
                                     Circle()
                                         .fill(isRecording ? Color.red : Color.gray)
                                         .frame(width: 10, height: 10)
-                                    Text(isRecording ? "Stop Recording RAW Stream" : "Record RAW Stream...")
+                                    Text(isRecording ? "Stop Recording" : "Start Export...")
                                 }
                                 .frame(maxWidth: .infinity)
                                 .padding(4)
@@ -146,7 +199,7 @@ struct AmbiophonicsDashboard: View {
         }
     }
     
-    // --- NEU: Dialog-Aufruf für den verlustfreien WAV-Export ---
+    // --- Dynamischer Dialog-Aufruf für den verlustfreien WAV-Export ---
     private func toggleRecording() {
         if isRecording {
             AudioEngineManager.shared.stopRecording()
@@ -155,12 +208,29 @@ struct AmbiophonicsDashboard: View {
             let panel = NSSavePanel()
             panel.allowedContentTypes = [UTType.wav]
             panel.canCreateDirectories = true
-            panel.nameFieldStringValue = "raw_stream_capture.wav"
-            panel.title = "Speicherort für 32-bit Float Audio-Stream wählen"
+            
+            if recordMode == 0 {
+                panel.nameFieldStringValue = "stream_raw_unprocessed.wav"
+            } else if recordMode == 1 {
+                panel.nameFieldStringValue = "stream_processed_std_race.wav"
+            } else {
+                panel.nameFieldStringValue = "stream_processed_glc_asym.wav"
+            }
+            
+            panel.title = "Speicherort für 32-bit Float Audio wählen"
             
             panel.begin { response in
                 if response == .OK, let url = panel.url {
-                    AudioEngineManager.shared.startRecording(to: url)
+                    if let dspPtr = AudioEngineManager.shared.dspEnginePtr {
+                        if recordMode == 2 {
+                            wrapper_setAsymmetry(dspPtr, true, 1.37, -3.9)
+                        } else {
+                            wrapper_setAsymmetry(dspPtr, false, 0.0, 0.0)
+                        }
+                    }
+                    
+                    let asProcessed = (recordMode != 0)
+                    AudioEngineManager.shared.startRecording(to: url, asProcessed: asProcessed)
                     isRecording = true
                 }
             }
@@ -172,6 +242,13 @@ struct AmbiophonicsDashboard: View {
             wrapper_setParameters(dspPtr, speakerDelay, attenuation, 0.5, true)
             wrapper_setCenterLevel(dspPtr, centerLevel)
             wrapper_setVolume(dspPtr, volumePercent / 100.0)
+            wrapper_setFirCrossover(dspPtr, crossoverLow, crossoverHigh)
+        }
+    }
+    
+    private func updateCrossover() {
+        if let dspPtr = AudioEngineManager.shared.dspEnginePtr {
+            wrapper_setFirCrossover(dspPtr, crossoverLow, crossoverHigh)
         }
     }
     
@@ -180,23 +257,28 @@ struct AmbiophonicsDashboard: View {
         speakerDelay = 68.0
         centerLevel = 0.0
         volumePercent = 100.0
+        crossoverLow = 250.0
+        crossoverHigh = 6000.0
         updateRACEParameters()
     }
     
     @ViewBuilder
-    private func parameterRow(name: String, value: Binding<Float>, range: ClosedRange<Float>, unit: String) -> some View {
+    private func parameterRow(name: String, value: Binding<Float>, range: ClosedRange<Float>, unit: String, fractionDigits: Int = 1) -> some View {
         VStack(alignment: .leading, spacing: 5) {
+            Text(unit.isEmpty ? name : "\(name) [\(unit)]").font(.subheadline)
+            
             HStack {
-                Text(name)
-                Spacer()
-                Text(String(format: "%.1f %@", value.wrappedValue, unit))
-                    .foregroundColor(.secondary)
+                Slider(value: value, in: range)
+                
+                TextField("", value: value, format: .number.precision(.fractionLength(fractionDigits)))
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .frame(width: 55)
+                    .multilineTextAlignment(.trailing)
+                    .font(.caption)
             }
-            Slider(value: value, in: range) { editing in
-                if !editing {
-                    updateRACEParameters()
-                }
-            }
+        }
+        .onChange(of: value.wrappedValue) {
+            updateRACEParameters()
         }
     }
 }
@@ -204,6 +286,52 @@ struct AmbiophonicsDashboard: View {
 // --------------------------------------------------------
 // --- DAS 3-BAND EQ MODUL ---
 // --------------------------------------------------------
+
+struct EQCurveGraphView: View {
+    @Binding var redrawTrigger: Int
+    @State private var curveData: [Float] = Array(repeating: 0.0, count: 200)
+    
+    var body: some View {
+        GeometryReader { geo in
+            let midY = geo.size.height / 2
+            
+            Path { path in
+                path.move(to: CGPoint(x: 0, y: midY))
+                path.addLine(to: CGPoint(x: geo.size.width, y: midY))
+            }
+            .stroke(Color.gray.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [5]))
+            
+            Path { path in
+                for i in 0..<curveData.count {
+                    let x = geo.size.width * CGFloat(i) / CGFloat(curveData.count - 1)
+                    let normalizedY = 1.0 - CGFloat(curveData[i] + 15.0) / 30.0
+                    let y = geo.size.height * min(max(normalizedY, 0.0), 1.0)
+                    
+                    if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
+                    else { path.addLine(to: CGPoint(x: x, y: y)) }
+                }
+            }
+            .stroke(Color.blue, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+        }
+        .frame(height: 100)
+        .padding(10)
+        .background(Color(white: 0.1))
+        .cornerRadius(6)
+        .onChange(of: redrawTrigger) {
+            fetchCurve()
+        }
+        .onAppear {
+            fetchCurve()
+        }
+    }
+    
+    private func fetchCurve() {
+        guard let dspPtr = AudioEngineManager.shared.dspEnginePtr else { return }
+        var rawData = [Float](repeating: 0.0, count: 200)
+        wrapper_getEqCurve(dspPtr, &rawData, Int32(rawData.count))
+        self.curveData = rawData
+    }
+}
 
 struct EQControlPanel: View {
     @AppStorage("eqEnabled") private var isEQEnabled: Bool = false
@@ -220,14 +348,14 @@ struct EQControlPanel: View {
     @AppStorage("eqHighQ") private var highQ: Double = 0.707
     @AppStorage("eqHighGain") private var highGain: Double = 0.0
     
+    @State private var curveRedrawTrigger: Int = 0
+    
     var body: some View {
         GroupBox(label:
             HStack {
-                Label("3-Band Parametric EQ (Biquad IIR)", systemImage: "slider.horizontal.3")
+                Label("3-Band Parametric EQ (FIR Phase-Linear)", systemImage: "slider.horizontal.3")
                     .font(.headline)
-                
                 Spacer()
-                
                 Button(action: resetEQ) {
                     Label("Reset", systemImage: "arrow.counterclockwise")
                 }
@@ -236,23 +364,27 @@ struct EQControlPanel: View {
                 
                 Toggle("Aktiv", isOn: $isEQEnabled)
                     .toggleStyle(SwitchToggleStyle(tint: .blue))
-                    .onChange(of: isEQEnabled) { _, newValue in
+                    .onChange(of: isEQEnabled) { oldValue, newValue in
                         if let dspPtr = AudioEngineManager.shared.dspEnginePtr {
                             wrapper_setEqEnabled(dspPtr, newValue)
                         }
                     }
             }
         ) {
-            HStack(spacing: 30) {
-                eqBandView(name: "Low", freq: $lowFreq, freqRange: 20...250, q: $lowQ, gain: $lowGain, bandIndex: 0)
-                Divider()
-                eqBandView(name: "Mid", freq: $midFreq, freqRange: 250...4000, q: $midQ, gain: $midGain, bandIndex: 1)
-                Divider()
-                eqBandView(name: "High", freq: $highFreq, freqRange: 4000...16000, q: $highQ, gain: $highGain, bandIndex: 2)
+            VStack(spacing: 15) {
+                EQCurveGraphView(redrawTrigger: $curveRedrawTrigger)
+                    .opacity(isEQEnabled ? 1.0 : 0.4)
+                
+                HStack(spacing: 30) {
+                    eqBandView(name: "Low", freq: $lowFreq, freqRange: 20...250, q: $lowQ, gain: $lowGain, bandIndex: 0)
+                    Divider()
+                    eqBandView(name: "Mid", freq: $midFreq, freqRange: 250...4000, q: $midQ, gain: $midGain, bandIndex: 1)
+                    Divider()
+                    eqBandView(name: "High", freq: $highFreq, freqRange: 4000...16000, q: $highQ, gain: $highGain, bandIndex: 2)
+                }
+                .padding(.top, 5)
             }
-            .padding(.top, 15)
             .padding(.bottom, 5)
-            .opacity(isEQEnabled ? 1.0 : 0.5)
             .disabled(!isEQEnabled)
         }
         .onAppear {
@@ -285,30 +417,44 @@ struct EQControlPanel: View {
     private func eqBandView(name: String, freq: Binding<Double>, freqRange: ClosedRange<Double>, q: Binding<Double>, gain: Binding<Double>, bandIndex: Int32) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("\(name) Band").font(.subheadline).bold()
+            
             HStack {
-                Text("Freq:").frame(width: 35, alignment: .leading).font(.caption)
+                Text("Freq [Hz]:").frame(width: 65, alignment: .leading).font(.caption)
                 Slider(value: freq, in: freqRange)
-                Text(String(format: "%.0f Hz", freq.wrappedValue)).frame(width: 50, alignment: .trailing).font(.caption)
+                TextField("", value: freq, format: .number.precision(.fractionLength(0)))
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .frame(width: 55)
+                    .multilineTextAlignment(.trailing)
+                    .font(.caption)
             }
             HStack {
-                Text("Q:").frame(width: 35, alignment: .leading).font(.caption)
+                Text("Q:").frame(width: 65, alignment: .leading).font(.caption)
                 Slider(value: q, in: 0.1...10.0)
-                Text(String(format: "%.2f", q.wrappedValue)).frame(width: 50, alignment: .trailing).font(.caption)
+                TextField("", value: q, format: .number.precision(.fractionLength(2)))
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .frame(width: 55)
+                    .multilineTextAlignment(.trailing)
+                    .font(.caption)
             }
             HStack {
-                Text("Gain:").frame(width: 35, alignment: .leading).font(.caption)
+                Text("Gain [dB]:").frame(width: 65, alignment: .leading).font(.caption)
                 Slider(value: gain, in: -12.0...12.0)
-                Text(String(format: "%+.1f dB", gain.wrappedValue)).frame(width: 50, alignment: .trailing).font(.caption)
+                TextField("", value: gain, format: .number.precision(.fractionLength(1)))
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .frame(width: 55)
+                    .multilineTextAlignment(.trailing)
+                    .font(.caption)
             }
         }
-        .onChange(of: freq.wrappedValue) { _, _ in sendToDSP(band: bandIndex, f: freq.wrappedValue, q: q.wrappedValue, g: gain.wrappedValue) }
-        .onChange(of: q.wrappedValue) { _, _ in sendToDSP(band: bandIndex, f: freq.wrappedValue, q: q.wrappedValue, g: gain.wrappedValue) }
-        .onChange(of: gain.wrappedValue) { _, _ in sendToDSP(band: bandIndex, f: freq.wrappedValue, q: q.wrappedValue, g: gain.wrappedValue) }
+        .onChange(of: freq.wrappedValue) { sendToDSP(band: bandIndex, f: freq.wrappedValue, q: q.wrappedValue, g: gain.wrappedValue) }
+        .onChange(of: q.wrappedValue) { sendToDSP(band: bandIndex, f: freq.wrappedValue, q: q.wrappedValue, g: gain.wrappedValue) }
+        .onChange(of: gain.wrappedValue) { sendToDSP(band: bandIndex, f: freq.wrappedValue, q: q.wrappedValue, g: gain.wrappedValue) }
     }
     
     private func sendToDSP(band: Int32, f: Double, q: Double, g: Double) {
         guard let dspPtr = AudioEngineManager.shared.dspEnginePtr else { return }
         wrapper_setEqBand(dspPtr, band, Float(f), Float(q), Float(g))
+        curveRedrawTrigger += 1
     }
 }
 
@@ -320,13 +466,12 @@ struct SpectrumAnalyzerView: View {
     @State private var spectrumData: [Float] = Array(repeating: 0.1, count: 32)
     let updateTimer = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
     
-    // --- NEU: Der statische Farbverlauf für die absolute Y-Achse ---
     let barGradient = LinearGradient(
         stops: [
-            .init(color: Color(red: 0.0, green: 0.2, blue: 0.7), location: 0.0),   // Dunkelblau am Boden
-            .init(color: Color(red: 0.0, green: 0.3, blue: 0.9), location: 0.75),  // Blau bis 75% Aussteuerung
-            .init(color: .red, location: 0.90),                                    // Übergang zu Rot bei 90%
-            .init(color: .purple, location: 1.0)                                   // Magenta (Purple) bei 100%
+            .init(color: Color(red: 0.0, green: 0.2, blue: 0.7), location: 0.0),
+            .init(color: Color(red: 0.0, green: 0.3, blue: 0.9), location: 0.75),
+            .init(color: .red, location: 0.90),
+            .init(color: .purple, location: 1.0)
         ],
         startPoint: .bottom,
         endPoint: .top
@@ -341,13 +486,12 @@ struct SpectrumAnalyzerView: View {
                         let level = CGFloat(spectrumData[i])
                         let barHeight = max(level * 120.0, 4.0)
                         
-                        // --- NEU: Wir zeichnen den kompletten Gradienten und maskieren ihn mit der dynamischen Balkenhöhe ---
                         Rectangle()
                             .fill(barGradient)
-                            .frame(height: 120) // Der Gradient ist immer voll aufgezogen
+                            .frame(height: 120)
                             .mask(
                                 VStack {
-                                    Spacer(minLength: 0) // Drückt den eigentlichen Balken nach unten
+                                    Spacer(minLength: 0)
                                     RoundedRectangle(cornerRadius: 2)
                                         .frame(height: barHeight)
                                 }
@@ -408,17 +552,25 @@ struct GeometryCalculatorView: View {
         GroupBox(label: Label("Geometry Calculator", systemImage: "ruler")) {
             VStack(spacing: 15) {
                 HStack {
-                    Text("Distance Head Baseline").font(.subheadline)
+                    Text("Distance Head Baseline [cm]").font(.subheadline)
                     Spacer()
                     Slider(value: $listenerDistance, in: 20...400)
-                    Text(String(format: "%.0f cm", listenerDistance)).frame(width: 65, alignment: .trailing).font(.caption)
+                    TextField("", value: $listenerDistance, format: .number.precision(.fractionLength(0)))
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .frame(width: 55)
+                        .multilineTextAlignment(.trailing)
+                        .font(.caption)
                 }
                 
                 HStack {
-                    Text("Speaker Separation").font(.subheadline)
+                    Text("Speaker Separation [cm]").font(.subheadline)
                     Spacer()
                     Slider(value: $speakerSeparation, in: 10...300)
-                    Text(String(format: "%.0f cm", speakerSeparation)).frame(width: 65, alignment: .trailing).font(.caption)
+                    TextField("", value: $speakerSeparation, format: .number.precision(.fractionLength(0)))
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .frame(width: 55)
+                        .multilineTextAlignment(.trailing)
+                        .font(.caption)
                 }
 
                 Divider()
